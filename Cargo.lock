@@ -36,6 +36,7 @@ name = "automerge-experiments"
 version = "0.1.0"
 dependencies = [
  "automerge",
+ "uuid",
 ]
 
 [[package]]
