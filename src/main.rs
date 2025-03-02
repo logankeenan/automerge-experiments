@@ -1,5 +1,6 @@
+use automerge::patches::TextRepresentation;
 use automerge::sync::SyncDoc;
-use automerge::{sync, Value, ROOT};
+use automerge::{sync, PatchLog, TextEncoding, Value, ROOT};
 use automerge::{transaction::Transactable, AutoCommit, Change, ObjType, ReadDoc};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -51,8 +52,6 @@ impl ChatUser {
         &mut self,
         chat_message: ChatMessage,
     ) -> Result<NetworkMessage, automerge::AutomergeError> {
-        
-
         // Create message as a Map entry
         let message_obj = self
             .doc
@@ -166,6 +165,13 @@ fn main() -> Result<(), automerge::AutomergeError> {
     // Create user3 and sync with user1's state
 
     let mut user3 = ChatUser::new("user3")?;
+    
+    // user 1 modified the first message
+    user1_message1.content = "Hello, anyone there??? [Edit]".to_string();
+    let msg1 = user1.add_message(user1_message1)?;
+    broadcast_message(&msg1, &mut [&mut user2, &mut user3])?;
+    
+    let mut patch_log = PatchLog::active(TextRepresentation::String(TextEncoding::UnicodeCodePoint));
 
     let mut user1_state = sync::State::new();
     // Generate the initial message to send to user2, unwrap for brevity
@@ -194,21 +200,21 @@ fn main() -> Result<(), automerge::AutomergeError> {
             user3
                 .doc
                 .sync()
-                .receive_sync_message(&mut user3_state, message.clone())?;
+                .receive_sync_message_log_patches(&mut user3_state, message.clone(), &mut patch_log)?;
         }
         if two_to_one.is_none() && one_to_two.is_none() {
             break;
         }
     }
+    
+    let patches = user1.doc.make_patches(&mut patch_log);
+    
+    println!("Patches: {:?}", patches);
 
     // User 3 sends a message
     let msg4 = user3.add_message(ChatMessage::new("user3", "Hey, can I join?"))?;
     broadcast_message(&msg4, &mut [&mut user1, &mut user2])?;
     
-    // user 1 modified the first message
-    user1_message1.content = "Hello, anyone there??? [Edit]".to_string();
-    let msg1 = user1.add_message(user1_message1)?;
-    broadcast_message(&msg1, &mut [&mut user2, &mut user3])?;
 
     user1.print_messages();
     user2.print_messages();
