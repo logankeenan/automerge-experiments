@@ -1,11 +1,11 @@
 use automerge::{
-    iter::MapRangeItem, transaction::Transactable, AutoCommit, Change, ObjType, ReadDoc,
+    transaction::Transactable, AutoCommit, Change, ObjType, ReadDoc,
 };
-use automerge::{ActorId, Value};
+use automerge::{ObjId, Value, ROOT};
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct NetworkMessage {
-    from_user: String,
     changes: Vec<Change>,
 }
 
@@ -19,19 +19,15 @@ struct ChatMessage {
 struct ChatUser {
     id: String,
     doc: AutoCommit,
-    messages_id: automerge::ObjId,
 }
 
 impl ChatUser {
-    fn new(user_id: &str, doc: AutoCommit, messages_id: automerge::ObjId) -> Result<Self, automerge::AutomergeError> {
-        // let mut doc = AutoCommit::new();
-// 
-        // let messages_id = doc.put_object(automerge::ROOT, "messages", ObjType::Map)?;
+    fn new(user_id: &str) -> Result<Self, automerge::AutomergeError> {
+        let doc = AutoCommit::new();
 
         Ok(ChatUser {
             id: user_id.to_string(),
             doc,
-            messages_id,
         })
     }
 
@@ -45,9 +41,7 @@ impl ChatUser {
         let msg_id = format!("msg_{}", timestamp);
 
         // Create message as a Map entry
-        let message_obj = self
-            .doc
-            .put_object(&self.messages_id, &msg_id, ObjType::Map)?;
+        let message_obj = self.doc.put_object(automerge::ROOT, &msg_id, ObjType::Map)?;
         self.doc.put(&message_obj, "user_id", self.id.clone())?;
         self.doc.put(&message_obj, "content", content.to_string())?;
         self.doc.put(&message_obj, "timestamp", timestamp)?;
@@ -55,7 +49,6 @@ impl ChatUser {
         let change = self.doc.get_last_local_change().unwrap();
 
         Ok(NetworkMessage {
-            from_user: self.id.clone(),
             changes: vec![change.clone()],
         })
     }
@@ -73,9 +66,7 @@ impl ChatUser {
     fn get_messages(&self) -> Vec<ChatMessage> {
         let mut messages = Vec::new();
 
-        for entry in self.doc.map_range(&self.messages_id, ..) {
-            
-            
+        for entry in self.doc.map_range(ROOT, ..) {
             let user_id = match self.doc.get(&entry.id, "user_id") {
                 Ok(Some((Value::Scalar(user_id), _))) => user_id.to_str().unwrap().to_string(),
                 _ => continue,
@@ -96,7 +87,8 @@ impl ChatUser {
                 timestamp,
             });
         }
-
+        
+        messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
         messages
     }
 
@@ -118,19 +110,14 @@ fn broadcast_message(
     users: &mut [&mut ChatUser],
 ) -> Result<(), automerge::AutomergeError> {
     for user in users {
-        // if user.id != msg.from_user {
         user.receive_message(msg)?;
-        // }
     }
     Ok(())
 }
 
 fn main() -> Result<(), automerge::AutomergeError> {
-    let mut base_doc = AutoCommit::new();
-    let messages_id = base_doc.put_object(automerge::ROOT, "messages", ObjType::Map)?;
-
-    let mut user1 = ChatUser::new("user1", base_doc.fork(), messages_id.clone())?;
-    let mut user2 = ChatUser::new("user2", base_doc.fork(), messages_id.clone())?;
+    let mut user1 = ChatUser::new("user1")?;
+    let mut user2 = ChatUser::new("user2")?;
 
     // User 1 sends a message
     let msg1 = user1.add_message("Hello, anyone there?")?;
@@ -150,21 +137,19 @@ fn main() -> Result<(), automerge::AutomergeError> {
     broadcast_message(&msg3, &mut [&mut user2])?;
 
     // Create user3 and sync with user1's state
-    let mut user3 = ChatUser::new("user3", base_doc.fork(), messages_id.clone())?;
-    let get_changes : Vec<Change> = user1.doc.get_changes(&[]).into_iter().cloned().collect();
-    
+    let mut user3 = ChatUser::new("user3")?;
+    let get_changes: Vec<Change> = user1.doc.get_changes(&[]).into_iter().cloned().collect();
 
     let initial_sync = NetworkMessage {
-        from_user: user1.id.clone(),
         changes: get_changes,
     };
     user3.receive_message(&initial_sync)?;
-    
+
     // User 3 sends a message
     let msg4 = user3.add_message("Hey, can I join?")?;
     broadcast_message(&msg4, &mut [&mut user1, &mut user2])?;
-    
-    // Print final state from all users' perspectives
+
+
     user1.print_messages();
     user2.print_messages();
     user3.print_messages();
