@@ -41,7 +41,6 @@ struct ChatUser {
 impl ChatUser {
     fn new(user_id: &str) -> Result<Self, automerge::AutomergeError> {
         let doc = AutoCommit::new();
-
         Ok(ChatUser {
             id: user_id.to_string(),
             doc,
@@ -53,9 +52,9 @@ impl ChatUser {
         chat_message: ChatMessage,
     ) -> Result<NetworkMessage, automerge::AutomergeError> {
         // Create message as a Map entry
-        let message_obj = self
-            .doc
-            .put_object(automerge::ROOT, &chat_message.id.to_string(), ObjType::Map)?;
+        let message_obj =
+            self.doc
+                .put_object(automerge::ROOT, &chat_message.id.to_string(), ObjType::Map)?;
         self.doc
             .put(&message_obj, "id", chat_message.id.to_string())?;
         self.doc
@@ -76,9 +75,19 @@ impl ChatUser {
         &mut self,
         network_msg: &NetworkMessage,
     ) -> Result<(), automerge::AutomergeError> {
+
+        let before_heads = self.doc.get_heads();
+
         for change in &network_msg.changes {
             self.doc.apply_changes(vec![change.clone()])?;
         }
+
+        let after_heads = self.doc.get_heads();
+        let _patches = self.doc.diff(&before_heads, &after_heads);
+
+        // println!("Patches: {:?}", patches);
+        // println!("");
+
         Ok(())
     }
 
@@ -94,7 +103,7 @@ impl ChatUser {
                 Ok(Some((Value::Scalar(content), _))) => content.to_str().unwrap().to_string(),
                 _ => continue,
             };
-            
+
             let id = match self.doc.get(&entry.id, "id") {
                 Ok(Some((Value::Scalar(content), _))) => content.to_str().unwrap().to_string(),
                 _ => continue,
@@ -165,13 +174,14 @@ fn main() -> Result<(), automerge::AutomergeError> {
     // Create user3 and sync with user1's state
 
     let mut user3 = ChatUser::new("user3")?;
-    
+
     // user 1 modified the first message
     user1_message1.content = "Hello, anyone there??? [Edit]".to_string();
     let msg1 = user1.add_message(user1_message1)?;
     broadcast_message(&msg1, &mut [&mut user2, &mut user3])?;
-    
-    let mut patch_log = PatchLog::active(TextRepresentation::String(TextEncoding::UnicodeCodePoint));
+
+    let mut patch_log =
+        PatchLog::active(TextRepresentation::String(TextEncoding::UnicodeCodePoint));
 
     let mut user1_state = sync::State::new();
     // Generate the initial message to send to user2, unwrap for brevity
@@ -197,24 +207,24 @@ fn main() -> Result<(), automerge::AutomergeError> {
         }
         let one_to_two = user1.doc.sync().generate_sync_message(&mut user1_state);
         if let Some(message) = one_to_two.as_ref() {
-            user3
-                .doc
-                .sync()
-                .receive_sync_message_log_patches(&mut user3_state, message.clone(), &mut patch_log)?;
+            user3.doc.sync().receive_sync_message_log_patches(
+                &mut user3_state,
+                message.clone(),
+                &mut patch_log,
+            )?;
         }
         if two_to_one.is_none() && one_to_two.is_none() {
             break;
         }
     }
-    
-    let patches = user1.doc.make_patches(&mut patch_log);
-    
-    println!("Patches: {:?}", patches);
+
+    let _patches = user1.doc.make_patches(&mut patch_log);
+
+    // println!("Patches: {:?}", patches);
 
     // User 3 sends a message
     let msg4 = user3.add_message(ChatMessage::new("user3", "Hey, can I join?"))?;
     broadcast_message(&msg4, &mut [&mut user1, &mut user2])?;
-    
 
     user1.print_messages();
     user2.print_messages();
